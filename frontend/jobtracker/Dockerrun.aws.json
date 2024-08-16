@@ -1,0 +1,28 @@
+{
+    "AWSEBDockerrunVersion": "1",
+    "Image": {
+      "Name": "ayushi9799/jobtracker-web",
+      "Update": "true"
+    },
+    "Ports": [
+      {
+        "ContainerPort": "3000"
+      }
+    ],
+    "Volumes": [],
+    "Logging": "/var/log/nginx",
+    "Environment": [
+      {
+        "Name": "REACT_APP_COGNITO_REGION",
+        "Value": "#{COGNITO_REGION}"
+      },
+      {
+        "Name": "REACT_APP_COGNITO_USER_POOL_ID",
+        "Value": "#{COGNITO_USER_POOL_ID}"
+      },
+      {
+        "Name": "REACT_APP_COGNITO_CLIENT_ID",
+        "Value": "#{COGNITO_CLIENT_ID}"
+      }
+    ]
+  }

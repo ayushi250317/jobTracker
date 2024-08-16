@@ -1,0 +1,650 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "CloudFormation template for Elastic Beanstalk with Cognito and IAM configurations using the default VPC"
+
+Resources:
+
+# Cognito User Pool-------------------------------------------------------------------------------------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: jobtracker
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: false
+      Schema:
+        - Name: name
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+        - Name: phone_number
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      VerificationMessageTemplate:
+        DefaultEmailOption: CONFIRM_WITH_LINK
+      UserAttributeUpdateSettings:
+        AttributesRequireVerificationBeforeUpdate:
+          - email
+      MfaConfiguration: "OFF"
+      LambdaConfig:
+        PreSignUp: !GetAtt PreSignUpLambda.Arn
+
+# Cognito User Pool Client-------------------------------------------------------------------------------------
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: jobTrackerClient
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      PreventUserExistenceErrors: ENABLED
+
+# Cognito User Domain-------------------------------------------------------------------------------------
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: jobtracker-domain
+      UserPoolId: !Ref UserPool
+
+# Cognito Lambda Trigger-------------------------------------------------------------------------------------
+  PreSignUpLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: PreSignUpLambda1
+      Handler: lambda.lambda_handler
+      Role: !GetAtt PreSignUpLambdaExecutionRole.Arn
+      Code:
+        S3Bucket: jobtrackercode
+        S3Key: preSignUpLambda.zip
+      Runtime: python3.12
+
+# Cognito Lambda Trigger Execution Role-------------------------------------------------------------------------------------
+  PreSignUpLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+# Cognito Lambda Trigger Invoke Permission-------------------------------------------------------------------------------------
+  CognitoLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt PreSignUpLambda.Arn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+# S3 Bucket-------------------------------------------------------------------------------------
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: resumebucket2607
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: ObjectWriter
+
+# DynamoDB Table-------------------------------------------------------------------------------------
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: application
+      BillingMode: PAY_PER_REQUEST  
+      AttributeDefinitions:
+        - AttributeName: application_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: application_id
+          KeyType: HASH
+  
+  # Lambda Execution Role-------------------------------------------------------------------------------------
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+        - arn:aws:iam::aws:policy/AmazonAPIGatewayAdministrator
+        - arn:aws:iam::aws:policy/AmazonCloudWatchEvidentlyFullAccess
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonTextractFullAccess
+        - arn:aws:iam::aws:policy/AWSLambda_FullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+        - arn:aws:iam::aws:policy/ComprehendFullAccess
+
+# Lambda Layer-------------------------------------------------------------------------------------
+  LambdaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - python3.12
+      Content:
+        S3Bucket: layer-jobtracker
+        S3Key: jobTracker-layer.zip
+      Description: Job Tracker Layer
+      LayerName: cf-testlayer
+      LicenseInfo: MIT
+
+# Lambda Functions-------------------------------------------------------------------------------------
+  LambdaFunctionCreateApplication:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: addApplication
+      Handler: lambda.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+       S3Bucket: jobtrackercode
+       S3Key: createApplication.zip
+      Runtime: python3.12
+      Layers:
+        - !Ref LambdaLayer
+  
+  LambdaFunctionGetApplications:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: fetchApplications
+      Handler: lambda.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+       S3Bucket: jobtrackercode
+       S3Key: getApplications.zip
+      Runtime: python3.12
+
+  LambdaFunctionFindSimilarity:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: findSimilarity
+      Handler: lambda.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+       S3Bucket: jobtrackercode
+       S3Key: analyseResume.zip
+      Runtime: python3.12
+      Layers:
+        - !Ref LambdaLayer
+      Timeout: 180
+
+  LambdaFunctionEditApplication:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: modifyApplication
+      Handler: lambda.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+       S3Bucket: jobtrackercode
+       S3Key: editApplication.zip
+      Runtime: python3.12
+
+  LambdaFunctionDeleteApplication:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: deleteApplication
+      Handler: lambda.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+       S3Bucket: jobtrackercode
+       S3Key: deleteApplication.zip
+      Runtime: python3.12
+
+# Lambda Invoke Permissions-------------------------------------------------------------------------------------
+  LambdaPermissionCreateApplication:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaFunctionCreateApplication.Arn
+      Principal: apigateway.amazonaws.com
+
+  LambdaPermissionGetApplications:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaFunctionGetApplications.Arn
+      Principal: apigateway.amazonaws.com    
+
+  LambdaPermissionFindSimilarity:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaFunctionFindSimilarity.Arn
+      Principal: apigateway.amazonaws.com 
+
+  LambdaPermissionEditApplication:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaFunctionEditApplication.Arn
+      Principal: apigateway.amazonaws.com
+
+  LambdaPermissionDeleteApplication:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !GetAtt LambdaFunctionDeleteApplication.Arn
+      Principal: apigateway.amazonaws.com
+
+# API Gateway-------------------------------------------------------------------------------------
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: jobtracker-api
+      Description: API with Cognito Authorizer and Lambda Integration
+
+# Cognito Authorizer-------------------------------------------------------------------------------------
+  CognitoAuthorizer:
+    Type: AWS::ApiGateway::Authorizer
+    Properties:
+      Name: CognitoAuthorizer
+      Type: COGNITO_USER_POOLS
+      IdentitySource: method.request.header.Authorization
+      RestApiId: !Ref ApiGateway
+      ProviderARNs:
+        - !GetAtt UserPool.Arn
+
+# API Resources------------------------------------------------------------------------------------
+  ApiResourceCreateApplication:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: 'createApplication'
+
+  ApiResourceGetApplications:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: 'fetchApplications'
+
+  ApiResourceGetApplicationsPath:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref ApiResourceGetApplications
+      PathPart: '{username}'
+
+  ApiResourceFindSimilarity:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: 'findSimilarity'
+
+  ApiResourceEditApplication:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: 'editApplication'
+
+  ApiResourceDeleteApplication:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: 'deleteApplication'
+
+  ApiResourceDeleteApplicationPath:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !Ref ApiResourceDeleteApplication
+      PathPart: '{application_id}'
+
+# API Method CORS-------------------------------------------------------------------------------------
+  ApiMethodCORSCreateApplication:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceCreateApplication
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiMethodCORSGetApplications:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceGetApplicationsPath
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiMethodCORSFindSimilarity:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceFindSimilarity
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiMethodCORSEditApplication:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceEditApplication
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  ApiMethodCORSDeleteApplication:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceDeleteApplicationPath
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,PUT,DELETE,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+# API Methods-------------------------------------------------------------------------------------
+  ApiMethodCreateApplication:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceCreateApplication
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionCreateApplication.Arn}/invocations
+      RequestModels:
+        application/json: Empty
+   
+  ApiMethodGetApplications:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceGetApplicationsPath
+      HttpMethod: GET
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionGetApplications.Arn}/invocations
+      RequestParameters:
+        method.request.path.id: true
+      MethodResponses:
+        - StatusCode: 200
+  
+  ApiMethodFindSimilarity:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceFindSimilarity
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionFindSimilarity.Arn}/invocations
+      RequestModels:
+        application/json: Empty
+
+  ApiMethodEditApplication:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceEditApplication
+      HttpMethod: POST
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionEditApplication.Arn}/invocations
+      RequestModels:
+        application/json: Empty
+
+  ApiMethodDeleteApplication:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref ApiResourceDeleteApplicationPath
+      HttpMethod: DELETE
+      AuthorizationType: COGNITO_USER_POOLS
+      AuthorizerId: !Ref CognitoAuthorizer
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaFunctionDeleteApplication.Arn}/invocations
+      RequestParameters:
+        method.request.path.id: true
+      MethodResponses:
+        - StatusCode: 200
+
+# API Gateway Deployment-------------------------------------------------------------------------------------
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: 
+      - ApiMethodCreateApplication
+      - ApiMethodGetApplications
+      - ApiMethodFindSimilarity
+      - ApiMethodEditApplication
+      - ApiMethodDeleteApplication
+    Properties:
+      RestApiId: !Ref ApiGateway
+
+# API Gateway Stage-------------------------------------------------------------------------------------
+  ApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: dev
+      DeploymentId: !Ref ApiGatewayDeployment
+
+# IAM Resource for Elastic Beanstalk Instance Creation------------------------------------------------------
+  EBInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EBInstanceRole
+
+# Elastic Beanstalk IAM Role------------------------------------------------------------------------------
+  EBInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWebTier
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker
+        - arn:aws:iam::aws:policy/AWSElasticBeanstalkWorkerTier
+
+# Elastic Beanstalk Application Setup-------------------------------------------------------------------------
+  ElasticBeanstalkApplication:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: jobtracker
+
+# Elastic Beanstalk Environment Setup-------------------------------------------------------------------------------------
+  ElasticBeanstalkEnvironment:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      ApplicationName: !Ref ElasticBeanstalkApplication
+      EnvironmentName: jobtracker
+      CNAMEPrefix: "jobtracker"
+      PlatformArn: arn:aws:elasticbeanstalk:us-east-1::platform/Docker running on 64bit Amazon Linux 2/4.0.0
+      OptionSettings:
+        # Instance Configuration
+        - Namespace: aws:autoscaling:launchconfiguration
+          OptionName: IamInstanceProfile
+          Value: !Ref EBInstanceProfile
+
+        # Environment Variables
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: REACT_APP_COGNITO_USER_POOL_ID
+          Value: !Ref UserPool
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: REACT_APP_COGNITO_CLIENT_ID
+          Value: !Ref UserPoolClient
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: REACT_APP_COGNITO_REGION
+          Value: !Ref "AWS::Region"
+        - Namespace: aws:elasticbeanstalk:application:environment
+          OptionName: REACT_APP_URL
+          Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/dev"     
+      VersionLabel: !Ref ElasticBeanstalkVersion
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT10M
+
+ # Elastic Beanstalk Version Setup-------------------------------------------------------------------------------------
+  ElasticBeanstalkVersion:
+    Type: AWS::ElasticBeanstalk::ApplicationVersion
+    Properties:
+      ApplicationName: !Ref ElasticBeanstalkApplication
+      Description: "Application version created by CloudFormation"
+      SourceBundle:
+        S3Bucket: beanstalkdeployment
+        S3Key: Dockerrun.aws.json
+
+Outputs:
+  CognitoUserPoolId:
+    Description: "Cognito User Pool ID"
+    Value: !Ref UserPool
+
+  CognitoUserPoolClientId:
+    Description: "Cognito User Pool Client ID"
+    Value: !Ref UserPoolClient
+
+  EndpointURL:
+    Description: "URL of the Elastic Beanstalk environment"
+    Value: !GetAtt [ElasticBeanstalkEnvironment, EndpointURL]
+    
+  ApiURL:
+    Description: "API Gateway endpoint URL for Dev stage"
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/dev"
