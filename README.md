@@ -12,11 +12,6 @@ The Job Tracker application allows users to:
 - Store user data and job-related information in DynamoDB.
 - Manage job applications and statuses in a user-friendly interface.
 
-## Architecture
-
-The project is designed using a microservice architecture, where each AWS service plays a unique role. Here's a high-level overview of the system's architecture:
-
-
 ## AWS Services Used
 
 1. **AWS CloudFormation**: Automates the provisioning of all AWS resources and sets up the entire infrastructure as code.
